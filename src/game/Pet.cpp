@@ -58,7 +58,7 @@ void Pet::AddToWorld()
 {
     ///- Register the pet for guid lookup
     if(!IsInWorld())
-        GetMap()->GetObjectsStore().insert<Pet>(GetGUID(), (Pet*)this);
+        GetMap()->GetObjectsStore().insert<Pet>(GetObjectGuid(), (Pet*)this);
 
     Unit::AddToWorld();
 }
@@ -67,7 +67,7 @@ void Pet::RemoveFromWorld()
 {
     ///- Remove the pet from the accessor
     if(IsInWorld())
-        GetMap()->GetObjectsStore().erase<Pet>(GetGUID(), (Pet*)NULL);
+        GetMap()->GetObjectsStore().erase<Pet>(GetObjectGuid(), (Pet*)NULL);
 
     ///- Don't call the function for Creature, normal mobs + totems go in a different storage
     Unit::RemoveFromWorld();
@@ -531,7 +531,9 @@ void Pet::Update(uint32 update_diff, uint32 diff)
         {
             // unsummon pet that lost owner
             Unit* owner = GetOwner();
-            if (!owner || (!IsWithinDistInMap(owner, GetMap()->GetVisibilityDistance()) && (!owner->GetCharmGuid().IsEmpty() && (owner->GetCharmGuid() != GetObjectGuid()))) || (isControlled() && owner->GetPetGuid().IsEmpty()))
+            if (!owner ||
+                (!IsWithinDistInMap(owner, GetMap()->GetVisibilityDistance()) && (owner->GetCharmGuid() && (owner->GetCharmGuid() != GetObjectGuid()))) ||
+                (isControlled() && !owner->GetPetGuid()))
             {
                 Unsummon(PET_SAVE_REAGENTS);
                 return;
@@ -912,7 +914,6 @@ bool Pet::InitStatsForLevel(uint32 petlevel, Unit* owner)
             SetUInt32Value(UNIT_FIELD_FLAGS, UNIT_FLAG_PVP_ATTACKABLE);
             break;
         case HUNTER_PET:
-            SetSheath(SHEATH_STATE_MELEE);
             SetByteValue(UNIT_FIELD_BYTES_0, 1, CLASS_WARRIOR);
             SetByteValue(UNIT_FIELD_BYTES_0, 2, GENDER_NONE);
             SetSheath(SHEATH_STATE_MELEE);
@@ -1146,7 +1147,7 @@ void Pet::_LoadSpellCooldowns()
         time_t curTime = time(NULL);
 
         WorldPacket data(SMSG_SPELL_COOLDOWN, (8+1+size_t(result->GetRowCount())*8));
-        data << GetGUID();
+        data << ObjectGuid(GetObjectGuid());
         data << uint8(0x0);                                 // flags (0x1, 0x2)
 
         do
@@ -1282,7 +1283,7 @@ void Pet::_LoadAuras(uint32 timediff)
         do
         {
             Field *fields = result->Fetch();
-            uint64 caster_guid = fields[0].GetUInt64();
+            ObjectGuid casterGuid = ObjectGuid(fields[0].GetUInt64());
             uint32 item_lowguid = fields[1].GetUInt32();
             uint32 spellid = fields[2].GetUInt32();
             uint32 stackcount = fields[3].GetUInt32();
@@ -1308,7 +1309,7 @@ void Pet::_LoadAuras(uint32 timediff)
             }
 
             // do not load single target auras (unless they were cast by the player)
-            if (caster_guid != GetGUID() && IsSingleTargetSpell(spellproto))
+            if (casterGuid != GetObjectGuid() && IsSingleTargetSpell(spellproto))
                 continue;
 
             if (remaintime != -1 && !IsPositiveSpell(spellproto))
@@ -1320,13 +1321,7 @@ void Pet::_LoadAuras(uint32 timediff)
             }
 
             // prevent wrong values of remaincharges
-            uint32 procCharges = spellproto->procCharges;
-            if (procCharges)
-            {
-                if (remaincharges <= 0 || remaincharges > procCharges)
-                    remaincharges = procCharges;
-            }
-            else
+            if (spellproto->procCharges == 0)
                 remaincharges = 0;
 
             if (!spellproto->StackAmount)
@@ -1337,7 +1332,7 @@ void Pet::_LoadAuras(uint32 timediff)
                 stackcount = 1;
 
             SpellAuraHolder *holder = CreateSpellAuraHolder(spellproto, this, NULL);
-            holder->SetLoadedState(caster_guid, ObjectGuid(HIGHGUID_ITEM, item_lowguid), stackcount, remaincharges, maxduration, remaintime);
+            holder->SetLoadedState(casterGuid, ObjectGuid(HIGHGUID_ITEM, item_lowguid), stackcount, remaincharges, maxduration, remaintime);
 
             for (int32 i = 0; i < MAX_EFFECT_INDEX; ++i)
             {
@@ -1399,7 +1394,7 @@ void Pet::_SaveAuras()
 
         //skip all holders from spells that are passive or channeled
         //do not save single target holders (unless they were cast by the player)
-        if (save && !holder->IsPassive() && !IsChanneledSpell(holder->GetSpellProto()) && (holder->GetCasterGUID() == GetGUID() || !holder->IsSingleTarget()))
+        if (save && !holder->IsPassive() && !IsChanneledSpell(holder->GetSpellProto()) && (holder->GetCasterGuid() == GetObjectGuid() || !holder->IsSingleTarget()))
         {
             int32  damage[MAX_EFFECT_INDEX];
             uint32 periodicTime[MAX_EFFECT_INDEX];
@@ -1413,7 +1408,7 @@ void Pet::_SaveAuras()
                 if (Aura *aur = holder->GetAuraByEffectIndex(SpellEffectIndex(i)))
                 {
                     // don't save not own area auras
-                    if (aur->IsAreaAura() && holder->GetCasterGUID() != GetGUID())
+                    if (aur->IsAreaAura() && holder->GetCasterGuid() != GetObjectGuid())
                         continue;
 
                     damage[i] = aur->GetModifier()->m_amount;

@@ -313,7 +313,7 @@ void WorldSession::HandleAuctionSellItem(WorldPacket & recv_data)
     {
         ObjectGuid itemGuid = guids[i];
 
-        if (itemGuid.IsEmpty())
+        if (!itemGuid)
             continue;
 
         uint32 stackSize = stackSizes[i];
@@ -371,6 +371,7 @@ void WorldSession::HandleAuctionSellItem(WorldPacket & recv_data)
             continue;
 
         Item *newItem = it->CloneItem(stackSize, pl);
+        newItem->RemoveFromUpdateQueueOf(pl);               // item not planned to adding to inventory
 
         pl->DestroyItemCount(it, stackSize, true);
 
@@ -383,6 +384,9 @@ void WorldSession::HandleAuctionSellItem(WorldPacket & recv_data)
         AH->itemGuidLow = newItem->GetObjectGuid().GetCounter();
         AH->itemTemplate = newItem->GetEntry();
         AH->owner = pl->GetGUIDLow();
+
+        Utf8toWStr(pl->GetName(), AH->ownerName);
+
         AH->startbid = bid;
         AH->bidder = 0;
         AH->bid = 0;
@@ -754,7 +758,7 @@ void WorldSession::HandleAuctionListItems(WorldPacket & recv_data)
     std::list<AuctionEntry*> auctions;
     for (AuctionHouseObject::AuctionEntryMap::const_iterator itr = aucs->begin(); itr != aucs->end(); ++itr)
         auctions.push_back(itr->second);
-    AuctionSorter sorter(Sort);
+    AuctionSorter sorter(Sort, GetPlayer());
     auctions.sort(sorter);
 
     // remove fake death

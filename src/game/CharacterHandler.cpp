@@ -27,6 +27,7 @@
 #include "ObjectMgr.h"
 #include "Player.h"
 #include "Guild.h"
+#include "GuildMgr.h"
 #include "UpdateMask.h"
 #include "Auth/md5.h"
 #include "ObjectAccessor.h"
@@ -76,7 +77,7 @@ bool LoginQueryHolder::Initialize()
     res &= SetPQuery(PLAYER_LOGIN_QUERY_LOADBOUNDINSTANCES,  "SELECT id, permanent, map, difficulty, resettime FROM character_instance LEFT JOIN instance ON instance = id WHERE guid = '%u'", m_guid.GetCounter());
     res &= SetPQuery(PLAYER_LOGIN_QUERY_LOADAURAS,           "SELECT caster_guid,item_guid,spell,stackcount,remaincharges,basepoints0,basepoints1,basepoints2,periodictime0,periodictime1,periodictime2,maxduration,remaintime,effIndexMask FROM character_aura WHERE guid = '%u'", m_guid.GetCounter());
     res &= SetPQuery(PLAYER_LOGIN_QUERY_LOADSPELLS,          "SELECT spell,active,disabled FROM character_spell WHERE guid = '%u'", m_guid.GetCounter());
-    res &= SetPQuery(PLAYER_LOGIN_QUERY_LOADQUESTSTATUS,     "SELECT quest,status,rewarded,explored,timer,mobcount1,mobcount2,mobcount3,mobcount4,itemcount1,itemcount2,itemcount3,itemcount4 FROM character_queststatus WHERE guid = '%u'", m_guid.GetCounter());
+    res &= SetPQuery(PLAYER_LOGIN_QUERY_LOADQUESTSTATUS,     "SELECT quest,status,rewarded,explored,timer,mobcount1,mobcount2,mobcount3,mobcount4,itemcount1,itemcount2,itemcount3,itemcount4,itemcount5,itemcount6 FROM character_queststatus WHERE guid = '%u'", m_guid.GetCounter());
     res &= SetPQuery(PLAYER_LOGIN_QUERY_LOADDAILYQUESTSTATUS,"SELECT quest FROM character_queststatus_daily WHERE guid = '%u'", m_guid.GetCounter());
     res &= SetPQuery(PLAYER_LOGIN_QUERY_LOADWEEKLYQUESTSTATUS,"SELECT quest FROM character_queststatus_weekly WHERE guid = '%u'", m_guid.GetCounter());
     res &= SetPQuery(PLAYER_LOGIN_QUERY_LOADMONTHLYQUESTSTATUS,"SELECT quest FROM character_queststatus_monthly WHERE guid = '%u'", m_guid.GetCounter());
@@ -94,7 +95,7 @@ bool LoginQueryHolder::Initialize()
     res &= SetPQuery(PLAYER_LOGIN_QUERY_LOADARENAINFO,       "SELECT arenateamid, played_week, played_season, wons_season, personal_rating FROM arena_team_member WHERE guid='%u'", m_guid.GetCounter());
     res &= SetPQuery(PLAYER_LOGIN_QUERY_LOADACHIEVEMENTS,    "SELECT achievement, date FROM character_achievement WHERE guid = '%u'", m_guid.GetCounter());
     res &= SetPQuery(PLAYER_LOGIN_QUERY_LOADCRITERIAPROGRESS,"SELECT criteria, counter, date FROM character_achievement_progress WHERE guid = '%u'", m_guid.GetCounter());
-    res &= SetPQuery(PLAYER_LOGIN_QUERY_LOADEQUIPMENTSETS,   "SELECT setguid, setindex, name, iconname, item0, item1, item2, item3, item4, item5, item6, item7, item8, item9, item10, item11, item12, item13, item14, item15, item16, item17, item18 FROM character_equipmentsets WHERE guid = '%u' ORDER BY setindex", m_guid.GetCounter());
+    res &= SetPQuery(PLAYER_LOGIN_QUERY_LOADEQUIPMENTSETS,   "SELECT setguid, setindex, name, iconname, ignore_mask, item0, item1, item2, item3, item4, item5, item6, item7, item8, item9, item10, item11, item12, item13, item14, item15, item16, item17, item18 FROM character_equipmentsets WHERE guid = '%u' ORDER BY setindex", m_guid.GetCounter());
     res &= SetPQuery(PLAYER_LOGIN_QUERY_LOADBGDATA,          "SELECT instance_id, team, join_x, join_y, join_z, join_o, join_map, taxi_start, taxi_end, mount_spell FROM character_battleground_data WHERE guid = '%u'", m_guid.GetCounter());
     res &= SetPQuery(PLAYER_LOGIN_QUERY_LOADACCOUNTDATA,     "SELECT type, time, data FROM character_account_data WHERE guid='%u'", m_guid.GetCounter());
     res &= SetPQuery(PLAYER_LOGIN_QUERY_LOADTALENTS,         "SELECT talent_id, current_rank, spec FROM character_talent WHERE guid = '%u'", m_guid.GetCounter());
@@ -285,7 +286,7 @@ void WorldSession::HandleCharCreateOpcode( WorldPacket & recv_data )
         return;
     }
 
-    if (sObjectMgr.GetPlayerGUIDByName(name))
+    if (sObjectMgr.GetPlayerGuidByName(name))
     {
         data << (uint8)CHAR_CREATE_NAME_IN_USE;
         SendPacket( &data );
@@ -494,7 +495,7 @@ void WorldSession::HandleCharDeleteOpcode( WorldPacket & recv_data )
     std::string name;
 
     // is guild leader
-    if(sObjectMgr.GetGuildByLeader(guid))
+    if (sGuildMgr.GetGuildByLeader(guid))
     {
         WorldPacket data(SMSG_CHAR_DELETE, 1);
         data << (uint8)CHAR_DELETE_FAILED_GUILD_LEADER;
@@ -657,7 +658,7 @@ void WorldSession::HandlePlayerLogin(LoginQueryHolder *holder)
 
     if(pCurrChar->GetGuildId() != 0)
     {
-        Guild* guild = sObjectMgr.GetGuildById(pCurrChar->GetGuildId());
+        Guild* guild = sGuildMgr.GetGuildById(pCurrChar->GetGuildId());
         if(guild)
         {
             data.Initialize(SMSG_GUILD_EVENT, (1+1+guild->GetMOTD().size()+1));
@@ -1181,8 +1182,8 @@ void WorldSession::HandleCharCustomizeOpcode(WorldPacket& recv_data)
     }
 
     // character with this name already exist
-    ObjectGuid newguid = sObjectMgr.GetPlayerGUIDByName(newname);
-    if (!newguid.IsEmpty() && newguid != guid)
+    ObjectGuid newguid = sObjectMgr.GetPlayerGuidByName(newname);
+    if (newguid && newguid != guid)
     {
         WorldPacket data(SMSG_CHAR_CUSTOMIZE, 1);
         data << uint8(CHAR_CREATE_NAME_IN_USE);
@@ -1241,9 +1242,17 @@ void WorldSession::HandleEquipmentSetSaveOpcode(WorldPacket &recv_data)
 
         recv_data >> itemGuid.ReadAsPacked();
 
+        // equipment manager sends "1" (as raw GUID) for slots set to "ignore" (not touch slot at equip set)
+        if (itemGuid.GetRawValue() == 1)
+        {
+            // ignored slots saved as bit mask because we have no free special values for Items[i]
+            eqSet.IgnoreMask |= 1 << i;
+            continue;
+        }
+
         Item *item = _player->GetItemByPos(INVENTORY_SLOT_BAG_0, i);
 
-        if(!item && !itemGuid.IsEmpty())                    // cheating check 1
+        if(!item && itemGuid)                               // cheating check 1
             return;
 
         if(item && item->GetObjectGuid() != itemGuid)       // cheating check 2
@@ -1280,6 +1289,10 @@ void WorldSession::HandleEquipmentSetUseOpcode(WorldPacket &recv_data)
         recv_data >> srcbag >> srcslot;
 
         DEBUG_LOG("Item (%s): srcbag %u, srcslot %u", itemGuid.GetString().c_str(), srcbag, srcslot);
+
+        // check if item slot is set to "ignored" (raw value == 1), must not be unequipped then
+        if (itemGuid.GetRawValue() == 1)
+            continue;
 
         Item *item = _player->GetItemByGuid(itemGuid);
 
