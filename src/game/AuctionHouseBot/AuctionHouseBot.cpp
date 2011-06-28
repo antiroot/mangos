@@ -708,7 +708,7 @@ bool AHB_Seller::Initialize()
     results = WorldDatabase.PQuery(npcQuery);
     if (results != NULL)
     {
-        barGoLink bar((int)results->GetRowCount());
+        BarGoLink bar(results->GetRowCount());
         do
         {
             bar.step();
@@ -738,7 +738,7 @@ bool AHB_Seller::Initialize()
     if (results != NULL)
     {
 
-        barGoLink bar((int)results->GetRowCount());
+        BarGoLink bar(results->GetRowCount());
         do
         {
             bar.step();
@@ -755,7 +755,7 @@ bool AHB_Seller::Initialize()
     sLog.outString("\n>> %u items loaded from your DB.",lootItems.size());
     sLog.outString("\n>> Sorting and cleaning Items bases...");
 
-    barGoLink bar(sItemStorage.MaxEntry);
+    BarGoLink bar(sItemStorage.MaxEntry);
     for (uint32 itemID = 0; itemID < sItemStorage.MaxEntry; itemID++)
     {
         ItemPrototype const* prototype = sObjectMgr.GetItemPrototype(itemID);
